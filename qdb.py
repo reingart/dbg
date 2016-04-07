@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 # coding:utf-8
 
-"Queues(Pipe)-based independent remote client-server Python Debugger"
+"Queues(Pipe)-based independent remote client-server Python Debugger (py2)"
 
 __author__ = "Mariano Reingart (reingart@gmail.com)"
 __copyright__ = "Copyright (C) 2011 Mariano Reingart"

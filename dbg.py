@@ -1,7 +1,7 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # coding:utf-8
 
-"Queues(Pipe)-based independent remote client-server Python Debugger"
+"Queues(Pipe)-based independent remote client-server Python Debugger (py3)"
 
 __author__ = "Mariano Reingart (reingart@gmail.com)"
 __copyright__ = "Copyright (C) 2011 Mariano Reingart"
@@ -1104,8 +1104,8 @@ if __name__ == '__main__':
     # Check environment for configuration parameters:
     kwargs = {}
     for param in 'host', 'port', 'authkey':
-       if 'QDB_%s' % param.upper() in os.environ:
-            kwargs[param] = os.environ['QDB_%s' % param.upper()]
+       if 'DBG_%s' % param.upper() in os.environ:
+            kwargs[param] = os.environ['DBG_%s' % param.upper()]
 
     if not sys.argv[1:]:
         # connect to a remote debbuger
