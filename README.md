@@ -1,4 +1,4 @@
-gdb
+dbg
 ===
 
 Independent remote client-server Python Debugger, based on `bdb` and `multiprocessing` (Python's StandardLibrary).
