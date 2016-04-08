@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # coding:utf-8
 
-"Queues(Pipe)-based independent remote client-server Python Debugger (py3)"
+"Queues(Pipe)-based independent remote client-server Python Debugger (new-py3)"
+
+from __future__ import print_function
 
 __author__ = "Mariano Reingart (reingart@gmail.com)"
 __copyright__ = "Copyright (C) 2011 Mariano Reingart"
