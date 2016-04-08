@@ -1,12 +1,14 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 # coding:utf-8
 
-"Queues(Pipe)-based independent remote client-server Python Debugger (old-py2)"
+"Queues(Pipe)-based independent remote client-server Python Debugger (new-py3)"
+
+from __future__ import print_function
 
 __author__ = "Mariano Reingart (reingart@gmail.com)"
 __copyright__ = "Copyright (C) 2011 Mariano Reingart"
 __license__ = "LGPL 3.0"
-__version__ = "1.03b"
+__version__ = "1.05a"
 
 # remote debugger queue-based (jsonrpc-like interface):
 # - bidirectional communication (request - response calls in both ways)
@@ -23,15 +25,11 @@ import traceback
 import cmd
 import pydoc
 import threading
-
-sys.path.append(os.path.dirname(__file__))
-
-from py3compat import *
+import collections
 
 
 # Speed Ups: global variables
 breaks = []
-poll = None
 
 
 class Qdb(bdb.Bdb):
@@ -39,7 +37,7 @@ class Qdb(bdb.Bdb):
 
     def __init__(self, pipe, redirect_stdio=True, allow_interruptions=False,
                  use_speedups=True, skip=[__name__]):
-        global breaks, poll
+        global breaks
         kwargs = {}
         if sys.version_info > (2, 7):
             kwargs['skip'] = skip
@@ -52,7 +50,10 @@ class Qdb(bdb.Bdb):
         self._wait_for_breakpoint = False
         self.mainpyfile = ""
         self._lineno = None     # last listed line numbre
+        # ignore filenames (avoid spurious interaction specially on py2)
+        self.ignore_files = [self.canonic(f) for f in (__file__, bdb.__file__)]
         # replace system standard input and output (send them thru the pipe)
+        self.old_stdio = sys.stdin, sys.stdout, sys.stderr
         if redirect_stdio:
             sys.stdin = self
             sys.stdout = self
@@ -64,8 +65,6 @@ class Qdb(bdb.Bdb):
         self.burst = 0          # do not send notifications ("burst" mode)
         self.params = {}        # optional parameters for interaction
         
-        # if available and enabled, enable speedups:
-        poll = self.pipe.poll
         # flags to reduce overhead (only stop at breakpoint or interrupt)
         self.use_speedups = use_speedups
         self.fast_continue = False
@@ -99,7 +98,7 @@ class Qdb(bdb.Bdb):
         while self.allow_interruptions and self.pipe.poll():
             self.pull_actions()
             # check for non-interaction rpc (set_breakpoint, interrupt)
-            while poll():
+            while self.pipe.poll():
                 self.pull_actions()
         if (frame.f_code.co_filename, frame.f_lineno) not in breaks and \
             self.fast_continue:
@@ -174,6 +173,7 @@ class Qdb(bdb.Bdb):
         # The script has to run in __main__ namespace (clear it)
         import __main__
         import imp
+        filename = os.path.abspath(filename)
         __main__.__dict__.clear()
         __main__.__dict__.update({"__name__"    : "__main__",
                                   "__file__"    : filename,
@@ -189,11 +189,23 @@ class Qdb(bdb.Bdb):
             statement = 'imp.load_source("__main__", "%s")' % filename
         else:
             statement = 'execfile(%r)' % filename
-        # notify and wait frontend to set initial params and breakpoints
-        self.pipe.send({'method': 'startup', 'args': (__version__, )})
+        self.startup()
+        self.run(statement)
+
+    def startup(self):
+        "Notify and wait frontend to set initial params and breakpoints"
+        # send some useful info to identify session
+        thread = threading.current_thread()
+        # get the caller module filename
+        frame = sys._getframe()
+        fn = self.canonic(frame.f_code.co_filename)
+        while frame.f_back and self.canonic(frame.f_code.co_filename) == fn:
+            frame = frame.f_back
+        args = [__version__, os.getpid(), thread.name, " ".join(sys.argv),
+                frame.f_code.co_filename]
+        self.pipe.send({'method': 'startup', 'args': args})
         while self.pull_actions() is not None:
             pass
-        self.run(statement)
 
     # General interaction function
 
@@ -202,8 +214,11 @@ class Qdb(bdb.Bdb):
         self.frame_locals = frame and frame.f_locals or {}
         # extract current filename and line number
         code, lineno = frame.f_code, frame.f_lineno
-        filename = code.co_filename
+        filename = self.canonic(code.co_filename)
         basename = os.path.basename(filename)
+        # check if interaction should be ignored (i.e. debug modules internals) 
+        if filename in self.ignore_files:
+            return
         message = "%s:%s" % (basename, lineno)
         if code.co_name != "?":
             message = "%s: %s()" % (message, code.co_name)
@@ -253,6 +268,8 @@ class Qdb(bdb.Bdb):
             frame = sys._getframe().f_back
         self._wait_for_mainpyfile = frame.f_code.co_filename
         self._wait_for_breakpoint = 0
+        # reinitialize debugger internal settings
+        self.fast_continue = False
         bdb.Bdb.set_trace(self, frame)
 
     # Command definitions, called by interaction()
@@ -278,7 +295,7 @@ class Qdb(bdb.Bdb):
         self.fast_continue = False
 
     def interrupt(self):
-        self.set_step()
+        self.set_trace()
         self.fast_continue = False
 
     def do_quit(self):
@@ -395,10 +412,16 @@ class Qdb(bdb.Bdb):
         env = {'locals': {}, 'globals': {}}
         # converts the frame global and locals to a short text representation:
         if self.frame:
-            for name, value in self.frame_locals.items():
-                env['locals'][name] = pydoc.cram(repr(value), 255), repr(type(value))
-            for name, value in self.frame.f_globals.items():
-                env['globals'][name] = pydoc.cram(repr(value), 20), repr(type(value))
+            for scope, max_length, vars in (
+                    ("locals", 255, list(self.frame_locals.items())),
+                    ("globals", 20, list(self.frame.f_globals.items())), ):
+                for (name, value) in vars:
+                    try:
+                        short_repr = pydoc.cram(repr(value), max_length)                    
+                    except Exception as e:
+                        # some objects cannot be represented...
+                        short_repr = "**exception** %s" % repr(e)
+                    env[scope][name] = (short_repr, repr(type(value)))
         return env
 
     def get_autocomplete_list(self, expression):
@@ -430,31 +453,31 @@ class Qdb(bdb.Bdb):
                     pass
                 elif inspect.ismethod(obj):
                     # Get the function from the object
-                    f = obj.im_func
+                    f = obj.__func__
                     drop_self = 1
                 elif inspect.isclass(obj):
                     # Get the __init__ method function for the class.
                     if hasattr(obj, '__init__'):
-                        f = obj.__init__.im_func
+                        f = obj.__init__.__func__
                     else:
                         for base in object.__bases__:
                             if hasattr(base, '__init__'):
-                                f = base.__init__.im_func
+                                f = base.__init__.__func__
                                 break
                     if f is not None:
                         drop_self = 1
-                elif callable(obj):
+                elif isinstance(obj, collections.Callable):
                     # use the obj as a function by default
                     f = obj
                     # Get the __call__ method instead.
-                    f = obj.__call__.im_func
+                    f = obj.__call__.__func__
                     drop_self = 0
             except AttributeError:
                 pass
             if f:
-                argspec = apply(inspect.formatargspec, inspect.getargspec(f))
+                argspec = inspect.formatargspec(*inspect.getargspec(f))
             doc = ''
-            if callable(obj):
+            if isinstance(obj, collections.Callable):
                 try:
                     doc = inspect.getdoc(obj)
                 except:
@@ -509,6 +532,19 @@ class Qdb(bdb.Bdb):
         # send exception information & request interaction
         self.user_exception(frame, info)
 
+    def ping(self):
+        "Minimal method to test that the pipe (connection) is alive"
+        try:
+            # get some non-trivial data to compare:
+            args = (id(object()), )
+            msg = {'method': 'ping', 'args': args, 'id': None}
+            self.pipe.send(msg)
+            msg = self.pipe.recv()
+            # check if data received is ok (alive and synchonized!)
+            return msg['result'] == args
+        except (IOError, EOFError):
+            return None
+        
     # console file-like object emulation
     def readline(self):
         "Replacement for stdin.readline()"
@@ -527,17 +563,32 @@ class Qdb(bdb.Bdb):
 
     def write(self, text):
         "Replacement for stdout.write()"
-        msg = {'method': 'write', 'args': (str(text), ), 'id': None}
+        msg = {'method': 'write', 'args': (text, ), 'id': None}
         self.pipe.send(msg)
         
     def writelines(self, l):
-        map(self.write, l)
+        list(map(self.write, l))
 
     def flush(self):
         pass
 
     def isatty(self):
         return 0
+
+    def encoding(self):
+        return None  # use default, 'utf-8' should be better...
+
+    def close(self):
+        # revert redirections and close connection
+        if sys:
+            sys.stdin, sys.stdout, sys.stderr = self.old_stdio
+        try:
+            self.pipe.close()
+        except:
+            pass
+
+    def __del__(self):
+        self.close()
 
 
 class QueuePipe(object):
@@ -572,6 +623,7 @@ class Frontend(object):
     
     def __init__(self, pipe):
         self.i = 1
+        self.info = ()
         self.pipe = pipe
         self.notifies = []
         self.read_lock = threading.RLock()
@@ -591,7 +643,8 @@ class Frontend(object):
         finally:
             self.write_lock.release()
 
-    def startup(self):
+    def startup(self, version, pid, thread_name, argv, filename):
+        self.info = (version, pid, thread_name, argv, filename)
         self.send({'method': 'run', 'args': (), 'id': None})
 
     def interaction(self, filename, lineno, line, *kwargs):
@@ -630,13 +683,15 @@ class Frontend(object):
             elif request.get('method') == 'interaction':
                 self.interaction(*request.get("args"), **request.get("kwargs"))
             elif request.get('method') == 'startup':
-                self.startup()
+                self.startup(*request['args'])
             elif request.get('method') == 'exception':
                 self.exception(*request['args'])
             elif request.get('method') == 'write':
                 self.write(*request.get("args"))
             elif request.get('method') == 'readline':
                 result = self.readline()
+            elif request.get('method') == 'ping':
+                result = request['args']
             if result:
                 response = {'version': '1.1', 'id': request.get('id'), 
                         'result': result, 
@@ -653,12 +708,12 @@ class Frontend(object):
             # wait until command acknowledge (response id match the request)
             res = self.recv()
             if 'id' not in res or not res['id']:
-                # nested notification received (i.e. write)! process it!
-                self.process_message(res)
+                # nested notification received (i.e. write)! process it later...
+                self.notifies.append(res)
             elif 'result' not in res:
                 # nested request received (i.e. readline)! process it!
                 self.process_message(res)
-            elif long(req['id']) != long(res['id']):
+            elif int(req['id']) != int(res['id']):
                 print("DEBUGGER wrong packet received: expecting id", req['id'], res['id'])
                 # protocol state is unknown
             elif 'error' in res and res['error']:
@@ -751,6 +806,134 @@ class Frontend(object):
         self.send(req)
 
 
+class Cli(Frontend, cmd.Cmd):
+    "Qdb Front-end command line interface"
+    
+    def __init__(self, pipe, completekey='tab', stdin=None, stdout=None, skip=None):
+        cmd.Cmd.__init__(self, completekey, stdin, stdout)
+        Frontend.__init__(self, pipe)
+
+    # redefine Frontend methods:
+    
+    def run(self):
+        while 1:
+            try:
+                Frontend.run(self)
+            except KeyboardInterrupt:
+                print("Interupting...")
+                self.interrupt()
+
+    def interaction(self, filename, lineno, line):
+        print("> %s(%d)\n-> %s" % (filename, lineno, line), end=' ')
+        self.filename = filename
+        self.cmdloop()
+
+    def exception(self, title, extype, exvalue, trace, request):
+        print("=" * 80)
+        print("Exception", title)
+        print(request)
+        print("-" * 80)
+
+    def write(self, text):
+        print(text, end=' ')
+    
+    def readline(self):
+        return input()
+        
+    def postcmd(self, stop, line):
+        return not line.startswith("h") # stop
+
+    do_h = cmd.Cmd.do_help
+    
+    do_s = Frontend.do_step
+    do_n = Frontend.do_next
+    do_c = Frontend.do_continue        
+    do_r = Frontend.do_return
+    do_q = Frontend.do_quit
+
+    def do_eval(self, args):
+        "Inspect the value of the expression"
+        print(Frontend.do_eval(self, args))
+ 
+    def do_list(self, args):
+        "List source code for the current file"
+        lines = Frontend.do_list(self, eval(args, {}, {}) if args else None)
+        self.print_lines(lines)
+    
+    def do_where(self, args):
+        "Print a stack trace, with the most recent frame at the bottom."
+        lines = Frontend.do_where(self)
+        self.print_lines(lines)
+
+    def do_environment(self, args=None):
+        env = Frontend.do_environment(self)
+        for key in env:
+            print("=" * 78)
+            print(key.capitalize())
+            print("-" * 78)
+            for name, value in list(env[key].items()):
+                print("%-12s = %s" % (name, value))
+
+    def do_list_breakpoint(self, arg=None):
+        "List all breakpoints"
+        breaks = Frontend.do_list_breakpoint(self)
+        print("Num File                          Line Temp Enab Hits Cond")
+        for bp in breaks:
+            print('%-4d%-30s%4d %4s %4s %4d %s' % bp)
+        print()
+
+    def do_set_breakpoint(self, arg):
+        "Set a breakpoint at filename:breakpoint"
+        if arg:
+            if ':' in arg:
+                args = arg.split(":")
+            else:
+                args = (self.filename, arg)
+            Frontend.do_set_breakpoint(self, *args)
+        else:
+            self.do_list_breakpoint()
+
+    def do_jump(self, args):
+        "Jump to the selected line"
+        ret = Frontend.do_jump(self, args)
+        if ret:     # show error message if failed
+            print("cannot jump:", ret)
+
+    do_b = do_set_breakpoint
+    do_l = do_list
+    do_p = do_eval
+    do_w = do_where
+    do_e = do_environment
+    do_j = do_jump
+
+    def default(self, line):
+        "Default command"
+        if line[:1] == '!':
+            print(self.do_exec(line[1:]))
+        else:
+            print("*** Unknown command: ", line)
+
+    def print_lines(self, lines):
+        for filename, lineno, bp, current, source in lines:
+            print("%s:%4d%s%s\t%s" % (filename, lineno, bp, current, source), end=' ')
+        print()
+
+
+# WORKAROUND for python3 server using pickle's HIGHEST_PROTOCOL (now 3) 
+# but python2 client using pickles's protocol version 2
+if sys.version_info[0] > 2:
+
+    import multiprocessing.reduction        # forking in py2
+
+    class ForkingPickler2(multiprocessing.reduction.ForkingPickler):
+        def __init__(self, file, protocol=None, fix_imports=True):
+            # downgrade to protocol ver 2
+            protocol = 2
+            super().__init__(file, protocol, fix_imports)
+
+    multiprocessing.reduction.ForkingPickler = ForkingPickler2
+
+
 def f(pipe):
     "test function to be debugged"
     print("creating debugger")
@@ -760,7 +943,7 @@ def f(pipe):
     my_var = "Mariano!"
     qdb_test.set_trace()
     print("hello world!")
-    for i in xrange(100000):
+    for i in range(100000):
         pass
     print("good by!")
     
@@ -773,7 +956,7 @@ def test():
         p = Process(target=f, args=(child_conn,))
     else:
         from threading import Thread
-        from Queue import Queue
+        from queue import Queue
         parent_queue, child_queue = Queue(), Queue()
         front_conn = QueuePipe("parent", parent_queue, child_queue)
         child_conn = QueuePipe("child", child_queue, parent_queue)
@@ -803,15 +986,18 @@ def test():
     sys.exit(0)
 
 
-def connect(host="localhost", port=6000, authkey='secret password'):
-    "Connect to a running debugger backend"
+def start(host="localhost", port=6000, authkey='secret password'):
+    "Start the CLI server and wait connection from a running debugger backend"
     
     address = (host, port)
-    #from multiprocessing.connection import Client
-    from json_serializer import JsonClient
-
-    print("qdb debugger fronted: waiting for connection to", address)
-    conn = Client(address, authkey=authkey)
+    from multiprocessing.connection import Listener
+    address = (host, port)     # family is deduced to be 'AF_INET'
+    if isinstance(authkey, str):
+        authkey = authkey.encode("utf8")
+    listener = Listener(address, authkey=authkey)
+    print("qdb debugger backend: waiting for connection at", address)
+    conn = listener.accept()
+    print('qdb debugger backend: connected to', listener.last_accepted)
     try:
         Cli(conn).run()
     except EOFError:
@@ -820,8 +1006,8 @@ def connect(host="localhost", port=6000, authkey='secret password'):
         conn.close()
 
 
-def main(host='localhost', port=6000, authkey=b'secret password'):
-    "Debug a script and accept a remote frontend"
+def main(host='localhost', port=6000, authkey='secret password'):
+    "Debug a script (running under the backend) and connect to remote frontend"
     
     if not sys.argv[1:] or sys.argv[1] in ("--help", "-h"):
         print("usage: pdb.py scriptfile [arg] ...")
@@ -837,23 +1023,15 @@ def main(host='localhost', port=6000, authkey=b'secret password'):
     # Replace pdb's dir with script's dir in front of module search path.
     sys.path[0] = os.path.dirname(mainpyfile)
 
-    #from multiprocessing.connection import Listener
-    from json_serializer import JsonListener
-    address = (host, port)     # family is deduced to be 'AF_INET'
-    listener = JsonListener(address, authkey=authkey)
-    print("qdb debugger backend: waiting for connection at", address)
-    conn = listener.accept()
-    print('qdb debugger backend: connected to', listener.last_accepted)
-
     # create the backend
-    qdb = Qdb(conn, redirect_stdio=True, allow_interruptions=True)
+    init(host, port, authkey)
     try:
         print("running", mainpyfile)
         qdb._runscript(mainpyfile)
         print("The program finished")
     except SystemExit:
         # In most cases SystemExit does not warrant a post-mortem session.
-        print("The program exited via sys.exit(). Exit status: ")
+        print("The program exited via sys.exit(). Exit status: ", end=' ')
         print(sys.exc_info()[1])
         raise
     except Exception:
@@ -864,28 +1042,49 @@ def main(host='localhost', port=6000, authkey=b'secret password'):
         print("Program terminated!")
     finally:
         conn.close()
-        listener.close()
         print("qdb debbuger backend: connection closed")
 
 
+# "singleton" to store a unique backend per process
 qdb = None
-def set_trace(host='localhost', port=6000, authkey=b'secret password'):
+
+
+def init(host='localhost', port=6000, authkey='secret password', redirect=True):
     "Simplified interface to debug running programs"
     global qdb, listener, conn
     
-    #from multiprocessing.connection import Listener
-    from json_serializer import JsonListener
+    # destroy the debugger if the previous connection is lost (i.e. broken pipe)
+    if qdb and not qdb.ping():
+        qdb.close()
+        qdb = None
+        
+    from multiprocessing.connection import Client
     # only create it if not currently instantiated
     if not qdb:
         address = (host, port)     # family is deduced to be 'AF_INET'
-        listener = JsonListener(address, authkey=authkey)
-        conn = listener.accept()
-
+        print("qdb debugger backend: waiting for connection to", address)
+        if isinstance(authkey, str):
+            authkey = authkey.encode("utf8")
+        conn = Client(address, authkey=authkey)
+        print('qdb debugger backend: connected to', address)
         # create the backend
-        qdb = Qdb(conn)
+        qdb = Qdb(conn, redirect_stdio=redirect, allow_interruptions=True)
+        # initial hanshake
+        qdb.startup()
+
+
+def set_trace(host='localhost', port=6000, authkey='secret password'):
+    "Simplified interface to start debugging immediately"
+    init(host, port, authkey)
     # start debugger backend:
     qdb.set_trace()
 
+def debug(host='localhost', port=6000, authkey='secret password'):
+    "Simplified interface to start debugging immediately (no stop)"
+    init(host, port, authkey)
+    # start debugger backend:
+    qdb.do_debug()
+    
 
 def quit():
     "Remove trace and quit"
@@ -902,20 +1101,20 @@ def quit():
 
 if __name__ == '__main__':
     # When invoked as main program:
-    if '--test' in sys.argv:
+    if '--test1' in sys.argv:
         test()
     # Check environment for configuration parameters:
     kwargs = {}
     for param in 'host', 'port', 'authkey':
-       if 'QDB_%s' % param.upper() in os.environ:
-            kwargs[param] = os.environ['QDB_%s' % param.upper()]
+       if 'DBG_%s' % param.upper() in os.environ:
+            kwargs[param] = os.environ['DBG_%s' % param.upper()]
 
     if not sys.argv[1:]:
         # connect to a remote debbuger
-        connect(**kwargs)
+        start(**kwargs)
     else:
         # start the debugger on a script
         # reimport as global __main__ namespace is destroyed
-        import qdb
-        qdb.main(**kwargs)
+        import dbg
+        dbg.main(**kwargs)
 
