@@ -1,7 +1,8 @@
-gdb / qdb
-=========
+gdb
+===
 
-Queues(Pipe)-based independent remote client-server Python Debugger, based on `bdb` and `multiprocessing` (Python's StandardLibrary).
+Independent remote client-server Python Debugger, based on `bdb` and `multiprocessing` (Python's StandardLibrary).
+Originally, this module was named `qdb`, due it uses queues (via pipes) internally.
 
 Used in:
 
@@ -39,3 +40,4 @@ Python2 and Python3 compatibility is archived using Pickle 2 standard protocol, 
 No dependencies are need.
 
 Per default, it listen on port 6000 (TCP), but that can be configured via environments variables or parameters (host, port, authkey)
+
