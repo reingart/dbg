@@ -14,27 +14,27 @@ Already, this project is used in:
 Others attemps include GEdit plugins, and IPython plugins could be comming soon.
 Standalone version can be run from the console (like pdb).
 
-To start a debug session for debuggee.py::
-
-    python3 -m dbg debuggee.py
-
-Then start the interactive debugging console::
+Then start the interactive debugging console:
 
     python3 -m dbg
 
+To start a debug session for debuggee.py:
 
-To start to debug from inside a running program just do:
+    python3 -m dbg debuggee.py
+
+Also, you could use the traditional `set_trace` fuction (like in PDB) as a shortcut to start the debugger and stop in the following line:
+
+```python
+import dbg; dbg.set_trace()
+```
+
+Alternatively, to start to debug from inside a running program just do:
 
 ```python
 import dbg; dbg.debug()
 ```
 
 Note that `debug` connects to the debugger but doesn't stop immediately (it is designed to be used with visual frontends that set breakpoints at startup). 
-Also, you could use the traditional `set_trace` fuction (like in PDB) as a shortcut to start the debugger and stop in the following line:
-
-```python
-import dbg; dbg.set_trace()
-```
 
 The "server" frontend (debugger) uses `multiprocessing.connection.Listener` and the client "backend" (debuggee) uses `multiprocessing.connection.Client`.
 This allows for a single frontend to host multiple debugging sessions (multithreading and multiprocessing could be supported).
