@@ -1,13 +1,17 @@
 dbg
 ===
 
-Independent remote client-server Python Debugger, based on `bdb` and `multiprocessing` (Python's StandardLibrary).
-Originally, this module was named `qdb`, due it uses queues (via pipes) internally.
+"Independent" Python Debugger (local/remote client-server & UI agnostic), based on `bdb` and `multiprocessing` (Python Standard Library).
 
-Used in:
+Originally, this module was named `qdb`, due it uses queues (via pipes) internally for RPC, using the `pdb` extension facilities.
+
+The initial main motivation was to decuople the `Pdb` user interface from the low-level Python Debugger framework (`Bdb`), providing a simple communication mechanism in order to implement several frontends (visual IDEs, online web IDEs, etc.).
+Already, this project is used in:
 
  * web2py (integrated to official admin app)
  * rad2py (wxPython IDE in development)
+
+Others attemps include GEdit plugins, and jupyter plgugins (ipython)
 
 Standalone version can be run from the console (like pdb).
 
@@ -15,7 +19,7 @@ To start a debug session for debuggee.py::
 
     python3 -m dbg debuggee.py
 
-Then start the console client::
+Then start the interactive debugging console::
 
     python3 -m dbg
 
@@ -27,7 +31,7 @@ import dbg; dbg.debug()
 ```
 
 Note that `debug` connects to the debugger but doesn't stop immediately (it is designed to be used with visual frontends that set breakpoints at startup). 
-Also, you could use `set_trace` as a shortcut to start the debugger and stop in the following line:
+Also, you could use the traditional `set_trace` fuction (like in PDB) as a shortcut to start the debugger and stop in the following line:
 
 ```python
 import dbg; dbg.set_trace()
@@ -39,5 +43,5 @@ This allows for a single frontend to host multiple debugging sessions (multithre
 Python2 and Python3 compatibility is archived using Pickle 2 standard protocol, so you can debug a py3k app from a py2 IDE.
 No dependencies are need.
 
-Per default, it listen on port 6000 (TCP), but that can be configured via environments variables or parameters (host, port, authkey)
+Per default, it listens on port 6000 (TCP), but that can be configured via environments variables or parameters (host, port, authkey)
 
