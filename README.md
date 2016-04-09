@@ -11,8 +11,7 @@ Already, this project is used in:
  * web2py (integrated to official admin app)
  * rad2py (wxPython IDE in development)
 
-Others attemps include GEdit plugins, and jupyter plgugins (ipython)
-
+Others attemps include GEdit plugins, and IPython plugins could be comming soon.
 Standalone version can be run from the console (like pdb).
 
 To start a debug session for debuggee.py::
