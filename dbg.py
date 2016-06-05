@@ -8,7 +8,7 @@ from __future__ import print_function
 __author__ = "Mariano Reingart (reingart@gmail.com)"
 __copyright__ = "Copyright (C) 2011 Mariano Reingart"
 __license__ = "LGPL 3.0"
-__version__ = "1.05a"
+__version__ = "1.5.2"
 
 # remote debugger queue-based (jsonrpc-like interface):
 # - bidirectional communication (request - response calls in both ways)
@@ -147,11 +147,12 @@ class Qdb(bdb.Bdb):
         extype, exvalue, trace = info
         # pre-process stack trace as it isn't pickeable (cannot be sent pure)
         msg = ''.join(traceback.format_exception(extype, exvalue, trace))
-        trace = traceback.extract_tb(trace)
+        # in python3.5, convert FrameSummary to tuples (py2.7+ compatibility)
+        tb = [tuple(fs) for fs in traceback.extract_tb(trace)]
         title = traceback.format_exception_only(extype, exvalue)[0]
         # send an Exception notification
         msg = {'method': 'exception', 
-               'args': (title, extype.__name__, exvalue, trace, msg), 
+               'args': (title, extype.__name__, repr(exvalue), tb, msg), 
                'id': None}
         self.pipe.send(msg)
         self.interaction(frame)
